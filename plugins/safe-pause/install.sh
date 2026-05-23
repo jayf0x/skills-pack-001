@@ -1,55 +1,58 @@
 #!/usr/bin/env bash
-# Install safe-pause (v2 — real subscription usage monitoring)
-# Sets up: hook, config, bridge server, launchd daemon, extension files
+# Install safe-pause v2 — Claude Code MCP integration for subscription usage monitoring.
+# Installs:
+#   1. MCP integration  → ~/Library/Application Support/Claude/Claude Extensions/
+#   2. PreToolUse hook  → ~/.claude/settings.json
+#   3. Config + state   → ~/.claude/safeclaude/
+#   4. Slash command    → ~/.claude/commands/
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE_DIR="$HOME/.claude/safeclaude"
 SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
-PLIST_LABEL="com.claudeskills.usagebridge"
-PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 
-for dep in jq curl python3; do
-  if ! command -v "$dep" &>/dev/null; then
-    echo "ERROR: $dep is required. Install with: brew install $dep"
-    exit 1
-  fi
-done
+# Claude Extensions directory (Claude Desktop / Claude Code)
+if [[ "$(uname)" == "Darwin" ]]; then
+  EXT_BASE="$HOME/Library/Application Support/Claude/Claude Extensions"
+else
+  EXT_BASE="$HOME/.config/Claude/Claude Extensions"
+fi
+EXT_DIR="$EXT_BASE/com.claudeskills.safe-pause"
 
 echo "Installing safe-pause..."
 
-mkdir -p "$STATE_DIR"
-
-# hook
-cp "$SCRIPT_DIR/hooks/check-usage.sh" "$STATE_DIR/check-usage.sh"
-chmod +x "$STATE_DIR/check-usage.sh"
-echo "  Hook:      $STATE_DIR/check-usage.sh"
-
-# config
-if [[ -f "$STATE_DIR/config.json" ]]; then
-  echo "  Config:    already exists, skipping ($STATE_DIR/config.json)"
-else
-  cp "$SCRIPT_DIR/config.default.json" "$STATE_DIR/config.json"
-  echo "  Config:    $STATE_DIR/config.json"
+# node required for MCP server
+if ! command -v node &>/dev/null; then
+  echo "ERROR: node is required (>=18). Install via https://nodejs.org or: brew install node"
+  exit 1
+fi
+if ! command -v jq &>/dev/null; then
+  echo "ERROR: jq is required. Install: brew install jq"
+  exit 1
 fi
 
-# bridge server
-cp "$SCRIPT_DIR/server/usage-server.py" "$STATE_DIR/usage-server.py"
-chmod +x "$STATE_DIR/usage-server.py"
-echo "  Server:    $STATE_DIR/usage-server.py"
+# ── 1. MCP integration ────────────────────────────────────────────────────
+mkdir -p "$EXT_DIR/server"
+cp "$SCRIPT_DIR/manifest.json" "$EXT_DIR/manifest.json"
+cp "$SCRIPT_DIR/server/index.js" "$EXT_DIR/server/index.js"
+chmod +x "$EXT_DIR/server/index.js"
+echo "  Integration: $EXT_DIR"
 
-# extension files
-mkdir -p "$STATE_DIR/extension"
-cp "$SCRIPT_DIR/extension/"* "$STATE_DIR/extension/"
-echo "  Extension: $STATE_DIR/extension/"
+# ── 2. State dir + config ─────────────────────────────────────────────────
+mkdir -p "$STATE_DIR"
+if [[ -f "$STATE_DIR/config.json" ]]; then
+  echo "  Config:      already exists, skipping ($STATE_DIR/config.json)"
+else
+  cp "$SCRIPT_DIR/config.default.json" "$STATE_DIR/config.json"
+  echo "  Config:      $STATE_DIR/config.json"
+fi
 
-# command
-mkdir -p "$COMMANDS_DIR"
-cp "$SCRIPT_DIR/commands/pause-ignore.toml" "$COMMANDS_DIR/pause-ignore.toml"
-echo "  Command:   $COMMANDS_DIR/pause-ignore.toml"
+# ── 3. PreToolUse hook ────────────────────────────────────────────────────
+cp "$SCRIPT_DIR/hooks/check-usage.sh" "$STATE_DIR/check-usage.sh"
+chmod +x "$STATE_DIR/check-usage.sh"
+echo "  Hook:        $STATE_DIR/check-usage.sh"
 
-# register PreToolUse hook in settings.json
 if [[ ! -f "$SETTINGS" ]]; then
   printf '{"hooks":{"PreToolUse":[]}}\n' > "$SETTINGS"
 fi
@@ -66,44 +69,39 @@ else
   echo "  Registered PreToolUse hook in settings.json"
 fi
 
-# launchd plist for bridge server (macOS)
-if [[ "$(uname)" == "Darwin" ]]; then
-  mkdir -p "$HOME/Library/LaunchAgents"
-  cat > "$PLIST_PATH" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${PLIST_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$(command -v python3)</string>
-    <string>${STATE_DIR}/usage-server.py</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${STATE_DIR}/usage-server.log</string>
-  <key>StandardErrorPath</key>
-  <string>${STATE_DIR}/usage-server.log</string>
-</dict>
-</plist>
-PLIST
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-  launchctl load "$PLIST_PATH"
-  echo "  Daemon:    $PLIST_PATH (loaded)"
+# ── 4. Register MCP server in Claude Code settings ────────────────────────
+if jq -e '.mcpServers."safe-pause"' "$SETTINGS" &>/dev/null; then
+  echo "  MCP server already in settings.json, skipping"
+else
+  PATCHED=$(jq \
+    --arg cmd "node" \
+    --arg arg "$EXT_DIR/server/index.js" \
+    '.mcpServers["safe-pause"] = {"command": $cmd, "args": [$arg]}' \
+    "$SETTINGS")
+  printf '%s\n' "$PATCHED" > "$SETTINGS"
+  echo "  Registered MCP server in settings.json"
 fi
 
+# ── 5. Slash command ──────────────────────────────────────────────────────
+mkdir -p "$COMMANDS_DIR"
+cp "$SCRIPT_DIR/commands/pause-ignore.toml" "$COMMANDS_DIR/pause-ignore.toml"
+echo "  Command:     $COMMANDS_DIR/pause-ignore.toml"
+
 echo ""
-echo "Done. Restart Claude Code for the hook to take effect."
+echo "Done. Restart Claude Code / Claude Desktop for changes to take effect."
 echo ""
-echo "NEXT STEP — load the extension:"
-echo "  1. In Claude Code: Extensions → Install unpacked extensions..."
-echo "  2. Select: $STATE_DIR/extension/"
-echo "  3. Open https://claude.ai to trigger org ID extraction"
+echo "NEXT STEP — provide credentials so usage can be fetched:"
 echo ""
-echo "Config: $STATE_DIR/config.json"
-echo "To bypass temporarily: /pause-ignore [duration]"
+echo "  Option A — via Claude Code MCP tool (after restart):"
+echo "    Ask Claude: 'Use set_credentials with org_id=... and session_key=...'"
+echo ""
+echo "  Option B — manually edit the config:"
+echo "    $STATE_DIR/config.json"
+echo ""
+echo "  How to find your credentials:"
+echo "    1. Open https://claude.ai in your browser"
+echo "    2. DevTools → Application → Cookies → claude.ai → copy 'sessionKey'"
+echo "    3. DevTools → Network → any /api/organizations/... request → copy the UUID from the URL"
+echo ""
+echo "Config:   $STATE_DIR/config.json"
+echo "Command:  /pause-ignore [duration]  — bypass checks temporarily"

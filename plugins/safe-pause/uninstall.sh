@@ -5,16 +5,19 @@ set -euo pipefail
 STATE_DIR="$HOME/.claude/safeclaude"
 SETTINGS="$HOME/.claude/settings.json"
 CMD_DEST="$HOME/.claude/commands/pause-ignore.toml"
-PLIST_LABEL="com.claudeskills.usagebridge"
-PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+
+if [[ "$(uname)" == "Darwin" ]]; then
+  EXT_DIR="$HOME/Library/Application Support/Claude/Claude Extensions/com.claudeskills.safe-pause"
+else
+  EXT_DIR="$HOME/.config/Claude/Claude Extensions/com.claudeskills.safe-pause"
+fi
 
 echo "Uninstalling safe-pause..."
 
-# stop + remove launchd daemon
-if [[ "$(uname)" == "Darwin" && -f "$PLIST_PATH" ]]; then
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-  rm "$PLIST_PATH"
-  echo "  Removed daemon: $PLIST_PATH"
+# remove MCP integration files
+if [[ -d "$EXT_DIR" ]]; then
+  rm -rf "$EXT_DIR"
+  echo "  Removed integration: $EXT_DIR"
 fi
 
 # remove hook file
@@ -29,23 +32,21 @@ if [[ -f "$CMD_DEST" ]]; then
   echo "  Removed: $CMD_DEST"
 fi
 
-# patch out settings.json entry
+# patch out PreToolUse hook + mcpServers entry from settings.json
 if [[ -f "$SETTINGS" ]] && command -v jq &>/dev/null; then
-  PATCHED=$(jq \
-    'if .hooks.PreToolUse then
-       .hooks.PreToolUse = [
-         .hooks.PreToolUse[]
-         | select(.hooks[]?.command? | test("check-usage.sh") | not)
-       ]
-     else . end' \
-    "$SETTINGS" 2>/dev/null || cat "$SETTINGS")
+  PATCHED=$(jq '
+    if .hooks.PreToolUse then
+      .hooks.PreToolUse = [
+        .hooks.PreToolUse[]
+        | select(.hooks[]?.command? | test("check-usage.sh") | not)
+      ]
+    else . end
+    | del(.mcpServers["safe-pause"])
+  ' "$SETTINGS" 2>/dev/null || cat "$SETTINGS")
   printf '%s\n' "$PATCHED" > "$SETTINGS"
-  echo "  Removed hook entry from settings.json"
+  echo "  Removed hook + MCP server from settings.json"
 fi
 
 echo ""
 echo "Done. State preserved at: $STATE_DIR"
-echo "To fully clean up: rm -rf $STATE_DIR"
-echo ""
-echo "Also remove the extension manually:"
-echo "  Extensions → Manage extensions → Claude Usage Monitor → Remove"
+echo "To fully clean up: rm -rf \"$STATE_DIR\""

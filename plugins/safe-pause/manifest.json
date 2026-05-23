@@ -1,0 +1,59 @@
+{
+  "manifest_version": "0.2",
+  "name": "safe-pause",
+  "display_name": "Safe Pause — Usage Monitor",
+  "version": "2.0.0",
+  "description": "Pauses Claude Code when Claude.ai subscription usage crosses a configurable threshold. Fetches live utilization from the Claude.ai API using your session credentials.",
+  "author": {
+    "name": "Jay Fox",
+    "email": "jjay56883@gmail.com"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "get_usage",
+      "description": "Return current Claude.ai subscription utilization (five_hour and seven_day)"
+    },
+    {
+      "name": "refresh_usage",
+      "description": "Force-fetch fresh usage data from the Claude.ai API and update the local cache"
+    },
+    {
+      "name": "set_credentials",
+      "description": "Store your claude.ai org_id and session_key so the server can fetch usage without a browser"
+    }
+  ],
+  "user_config": {
+    "org_id": {
+      "type": "string",
+      "title": "Organization ID",
+      "description": "Your claude.ai organization ID (visible in claude.ai network requests to /api/organizations/...)",
+      "required": false,
+      "default": ""
+    },
+    "session_key": {
+      "type": "string",
+      "title": "Session Key",
+      "description": "Your claude.ai sessionKey cookie value — find it in browser DevTools → Application → Cookies → claude.ai",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "keywords": ["usage", "quota", "subscription", "hook", "guard", "pause", "safety"],
+  "license": "MIT"
+}

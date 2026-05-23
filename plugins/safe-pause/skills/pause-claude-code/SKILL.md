@@ -14,14 +14,14 @@ calls when utilization crosses a threshold.
 ## Architecture
 
 ```
-claude.ai page
-  └─ Chrome extension (content.js)
-       └─ extracts org ID from window.DD_RUM
-            └─ background.js polls /api/organizations/{orgId}/usage every 60s
-                 └─ POSTs to usage-server.py on localhost:2999
-                      └─ writes ~/.claude/safeclaude/usage.json
-                           └─ PreToolUse hook reads it → warn/block
+MCP server (server/index.js — Node.js, zero npm deps)
+  └─ polls claude.ai /api/organizations/{orgId}/usage every 60s
+       └─ writes ~/.claude/safeclaude/usage.json
+            └─ PreToolUse hook (check-usage.sh) reads it → warn/block
 ```
+
+No browser extension needed. The MCP server fetches usage directly using your
+stored `session_key` cookie and `org_id`.
 
 ## Install
 
@@ -29,17 +29,33 @@ claude.ai page
 ./install.sh
 ```
 
-Then load the extension in Claude Code:
-1. Open **Extensions → Install unpacked extensions...**
-2. Select `~/.claude/safeclaude/extension/`
+Then set your credentials once after Claude Code restarts:
 
-Visit `https://claude.ai` once to trigger org ID extraction.
+```
+# Ask Claude in Claude Code:
+Use set_credentials with org_id="<uuid>" and session_key="<value>"
+```
+
+Or edit `~/.claude/safeclaude/config.json` directly.
+
+**Finding credentials:**
+1. Open https://claude.ai in your browser
+2. DevTools → Application → Cookies → claude.ai → copy `sessionKey`
+3. DevTools → Network → any `/api/organizations/...` request → copy the UUID from the URL
 
 ## Commands
 
 - `/pause-ignore` — suppress checks for 5 hours (default)
 - `/pause-ignore 2h` — suppress for 2 hours
 - `/pause-ignore 30m` — suppress for 30 minutes
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_usage` | Return current utilization from cache (or fetch if stale) |
+| `refresh_usage` | Force-fetch fresh data from claude.ai API |
+| `set_credentials` | Store `org_id` + `session_key` in config |
 
 ## Config
 
@@ -49,23 +65,16 @@ Edit `~/.claude/safeclaude/config.json`:
 {
   "warn_at_percent": 75,
   "pause_at_percent": 90,
-  "server_port": 2999
+  "org_id": "your-org-uuid",
+  "session_key": "your-session-key"
 }
 ```
 
-## Manual usage fetch
+## Manual usage check
 
-If the bridge server is not running, fetch usage manually:
-
-```js
-// In claude.ai browser console:
-const orgId = window.DD_RUM?.getUser()?.organization_id;
-fetch(`/api/organizations/${orgId}/usage`).then(r => r.json()).then(console.log);
-```
-
-Or via curl (requires valid session cookie):
 ```bash
-curl -s "http://127.0.0.1:2999/usage" | jq '{five_hour: .five_hour.utilization, seven_day: .seven_day.utilization}'
+cat ~/.claude/safeclaude/usage.json | \
+  jq '{five_hour: .five_hour.utilization, seven_day: .seven_day.utilization}'
 ```
 
 ## Uninstall

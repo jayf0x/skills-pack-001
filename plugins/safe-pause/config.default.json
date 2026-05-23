@@ -1,5 +1,6 @@
 {
   "warn_at_percent": 75,
   "pause_at_percent": 90,
-  "server_port": 2999
+  "org_id": "",
+  "session_key": ""
 }
